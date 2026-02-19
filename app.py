@@ -52,9 +52,22 @@ def _resolve_flutter_web_build_dir() -> Path:
     if override:
         return Path(override).expanduser().resolve()
 
-    # backend/app.py -> backend/ -> project root
-    project_root = Path(__file__).resolve().parent.parent
-    return (project_root / "build" / "web").resolve()
+    # Support both layouts:
+    # 1) app.py at repo root (Render/GitHub backend repo)
+    # 2) backend/app.py under a larger project root (original XAMPP layout)
+    here = Path(__file__).resolve().parent
+    candidates = [
+        (here / "build" / "web"),
+        (here.parent / "build" / "web"),
+        (here.parent.parent / "build" / "web"),
+    ]
+
+    for candidate in candidates:
+        if (candidate / "index.html").exists():
+            return candidate.resolve()
+
+    # Default to repo-root build/web (even if missing) so logs/config are predictable.
+    return candidates[0].resolve()
 
 
 def create_app(config_class=None):
