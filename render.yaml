@@ -6,6 +6,8 @@ services:
     autoDeploy: true
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT
+    # Run DB init once after build on each deploy (idempotent seed)
+    releaseCommand: python database/init_db.py
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
