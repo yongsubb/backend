@@ -410,6 +410,19 @@ def create_app(config_class=None):
 
             # Otherwise serve the SPA entrypoint.
             return send_from_directory(flutter_web_dir, "index.html")
+
+    else:
+
+        @app.route("/", methods=["GET"])
+        def root_index():
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Vivian Cosmetic Shop API is running",
+                    "health": "/api/health",
+                    "api": "/api",
+                }
+            ), 200
     
     # Health check endpoint
     @app.route('/api/health', methods=['GET'])
