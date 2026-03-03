@@ -16,7 +16,13 @@ def _mask_email(email: str) -> str:
     return f'{masked_name}@{domain}'
 
 
-def send_otp_email(*, to_email: str, otp: str) -> tuple[bool, str | None, str | None]:
+def send_otp_email(
+    *,
+    to_email: str,
+    otp: str,
+    subject: str | None = None,
+    body_template: str | None = None,
+) -> tuple[bool, str | None, str | None]:
     """Send a 6-digit OTP to an email address via SMTP.
 
     Env vars:
@@ -51,12 +57,13 @@ def send_otp_email(*, to_email: str, otp: str) -> tuple[bool, str | None, str | 
     if not to:
         return False, 'Customer email is missing', None
 
-    subject = (os.getenv('OTP_EMAIL_SUBJECT') or 'Vivian Loyalty Verification Code').strip()
-    body_template = (
-        os.getenv('OTP_EMAIL_BODY_TEMPLATE')
+    subject = (subject or os.getenv('OTP_EMAIL_SUBJECT') or 'Vivian Loyalty Verification Code').strip()
+    effective_body_template = (
+        body_template
+        or os.getenv('OTP_EMAIL_BODY_TEMPLATE')
         or 'Your Vivian Loyalty verification code is {otp}. It expires in 5 minutes.'
     )
-    body = (body_template or '').replace('{otp}', str(otp or '').strip())
+    body = (effective_body_template or '').replace('{otp}', str(otp or '').strip())
 
     msg = EmailMessage()
     msg['From'] = from_email

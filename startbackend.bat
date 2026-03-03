@@ -9,6 +9,22 @@ echo.
 cd /d "%~dp0"
 
 REM ------------------------------------------------------------
+REM Ensure .env exists (copy from .env.example on first run)
+REM ------------------------------------------------------------
+if not exist ".env" (
+    if exist ".env.example" (
+        echo Creating .env from .env.example...
+        copy ".env.example" ".env" >NUL
+        echo.
+        echo NOTE: Update .env with your SMTP settings to enable Email OTP.
+        echo       Required: SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD
+        echo.
+    ) else (
+        echo WARNING: .env not found and .env.example is missing.
+    )
+)
+
+REM ------------------------------------------------------------
 REM Start ngrok tunnel (needed for PayMongo webhooks/redirects)
 REM ------------------------------------------------------------
 REM Skip if ngrok is already running.

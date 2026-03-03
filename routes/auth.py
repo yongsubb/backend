@@ -2,7 +2,14 @@
 Authentication routes - Login, Logout, Token management
 """
 from datetime import datetime
+import hashlib
+import hmac
+import os
 import re
+import secrets
+import time
+import uuid
+from typing import Optional
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import (
     create_access_token,
@@ -14,6 +21,8 @@ from flask_jwt_extended import (
 from sqlalchemy.exc import SQLAlchemyError
 from extensions import db
 from models.user import User
+from utils.activity_logger import log_activity
+from utils.otp_email import send_otp_email
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -23,6 +32,72 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def _is_valid_email(value: str) -> bool:
     return bool(_EMAIL_RE.match((value or "").strip()))
+
+
+# =============================================================================
+# Password reset via Email OTP (in-memory store; no DB migrations)
+# =============================================================================
+_PWD_OTP_TTL_SECONDS = int(os.getenv('PWD_RESET_OTP_TTL_SECONDS') or (5 * 60))
+_PWD_OTP_MAX_ATTEMPTS = int(os.getenv('PWD_RESET_OTP_MAX_ATTEMPTS') or 5)
+_PWD_OTP_MAX_REQUESTS_WINDOW_SECONDS = int(
+    os.getenv('PWD_RESET_OTP_MAX_REQUESTS_WINDOW_SECONDS') or (10 * 60)
+)
+_PWD_OTP_MAX_REQUESTS_PER_WINDOW = int(
+    os.getenv('PWD_RESET_OTP_MAX_REQUESTS_PER_WINDOW') or 3
+)
+
+_pwd_reset_otp_store: dict[str, dict] = {}
+
+
+def _now_ts() -> int:
+    return int(time.time())
+
+
+def _otp_signing_key() -> bytes:
+    secret = os.getenv('SECRET_KEY') or os.getenv('JWT_SECRET_KEY') or 'otp-dev-secret'
+    return secret.encode('utf-8')
+
+
+def _hash_otp(*, otp_ref: str, otp_code: str) -> str:
+    msg = f'{otp_ref}:{otp_code}'.encode('utf-8')
+    return hmac.new(_otp_signing_key(), msg, hashlib.sha256).hexdigest()
+
+
+def _generate_otp_code() -> str:
+    return f'{secrets.randbelow(1_000_000):06d}'
+
+
+def _cleanup_pwd_otps() -> None:
+    now = _now_ts()
+    expired = [k for k, v in _pwd_reset_otp_store.items() if int(v.get('expires_at', 0)) <= now]
+    for k in expired:
+        _pwd_reset_otp_store.pop(k, None)
+
+
+def _rate_limit_key(user_id: int, email: str) -> str:
+    return f'{user_id}:{(email or "").strip().lower()}'
+
+
+def _count_recent_requests(user_id: int, email: str) -> int:
+    now = _now_ts()
+    window_start = now - _PWD_OTP_MAX_REQUESTS_WINDOW_SECONDS
+    key = _rate_limit_key(user_id, email)
+    count = 0
+    for v in _pwd_reset_otp_store.values():
+        if v.get('rate_key') != key:
+            continue
+        if int(v.get('created_at', 0)) >= window_start:
+            count += 1
+    return count
+
+
+def _validate_new_password(password: str) -> Optional[str]:
+    pwd = (password or '').strip()
+    if not pwd:
+        return 'New password is required'
+    if len(pwd) < 6:
+        return 'Password must be at least 6 characters'
+    return None
 
 
 @auth_bp.route('/login', methods=['POST'])
@@ -140,6 +215,215 @@ def login():
         return jsonify({
             'success': False,
             'message': f'Login failed: {str(e)}'
+        }), 500
+
+
+@auth_bp.route('/password-reset/request', methods=['POST'])
+def request_password_reset_otp():
+    """Request a password reset OTP sent to the user's email."""
+
+    try:
+        _cleanup_pwd_otps()
+
+        data = request.get_json() or {}
+        raw = (
+            data.get('username_or_email')
+            or data.get('identifier')
+            or data.get('username')
+            or data.get('email')
+            or ''
+        )
+        identifier = (raw or '').strip()
+        if not identifier:
+            return jsonify({'success': False, 'message': 'Username or email is required'}), 400
+
+        user = None
+        if '@' in identifier:
+            email = identifier.lower()
+            if not _is_valid_email(email):
+                return jsonify({'success': False, 'message': 'Invalid email address'}), 400
+            user = User.query.filter(db.func.lower(User.email) == email).first()
+        else:
+            user = User.query.filter_by(username=identifier).first()
+
+        if not user or not user.is_active:
+            return jsonify({
+                'success': True,
+                'message': 'If the account exists, a verification code has been sent to the registered email.'
+            }), 200
+
+        email = (user.email or '').strip()
+        if not email or not _is_valid_email(email):
+            return jsonify({
+                'success': True,
+                'message': 'If the account exists, a verification code has been sent to the registered email.'
+            }), 200
+
+        recent = _count_recent_requests(user.id, email)
+        if recent >= _PWD_OTP_MAX_REQUESTS_PER_WINDOW:
+            return jsonify({
+                'success': True,
+                'message': 'If the account exists, a verification code has been sent to the registered email.'
+            }), 200
+
+        otp_ref = str(uuid.uuid4())
+        otp_code = _generate_otp_code()
+
+        ok, err, masked = send_otp_email(
+            to_email=email,
+            otp=otp_code,
+            subject=(os.getenv('PWD_RESET_EMAIL_SUBJECT') or 'Vivian Cosmetic Shop Password Reset Code'),
+            body_template=(
+                os.getenv('PWD_RESET_EMAIL_BODY_TEMPLATE')
+                or 'Your Vivian Cosmetic Shop password reset code is {otp}. It expires in 5 minutes.'
+            ),
+        )
+
+        if not ok:
+            try:
+                log_activity(
+                    user_id=user.id,
+                    action='Password reset OTP send failed',
+                    entity_type='user',
+                    entity_id=user.id,
+                    details={'masked_email': masked, 'error': err},
+                )
+            except Exception:
+                pass
+
+            return jsonify({
+                'success': True,
+                'message': 'If the account exists, a verification code has been sent to the registered email.'
+            }), 200
+
+        now = _now_ts()
+        _pwd_reset_otp_store[otp_ref] = {
+            'user_id': user.id,
+            'email': email,
+            'otp_hash': _hash_otp(otp_ref=otp_ref, otp_code=otp_code),
+            'created_at': now,
+            'expires_at': now + _PWD_OTP_TTL_SECONDS,
+            'attempts': 0,
+            'rate_key': _rate_limit_key(user.id, email),
+        }
+
+        try:
+            log_activity(
+                user_id=user.id,
+                action='Requested password reset OTP',
+                entity_type='user',
+                entity_id=user.id,
+                details={'masked_email': masked},
+            )
+        except Exception:
+            pass
+
+        return jsonify({
+            'success': True,
+            'message': 'If the account exists, a verification code has been sent to the registered email.',
+            'data': {
+                'otp_ref': otp_ref,
+                'destination': masked,
+            }
+        }), 200
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Failed to request OTP: {str(e)}'}), 500
+
+
+@auth_bp.route('/password-reset/confirm', methods=['POST'])
+def confirm_password_reset_otp():
+    """Confirm OTP and set a new password."""
+
+    try:
+        _cleanup_pwd_otps()
+        data = request.get_json() or {}
+        otp_ref = (data.get('otp_ref') or '').strip()
+        otp_code = (data.get('otp_code') or '').strip()
+        new_password = data.get('new_password')
+
+        if not otp_ref or not otp_code:
+            return jsonify({
+                'success': False,
+                'message': 'OTP reference and code are required'
+            }), 400
+
+        pwd_err = _validate_new_password(new_password)
+        if pwd_err:
+            return jsonify({'success': False, 'message': pwd_err}), 400
+
+        entry = _pwd_reset_otp_store.get(otp_ref)
+        if not entry:
+            return jsonify({
+                'success': False,
+                'message': 'OTP expired or invalid. Please request a new OTP.'
+            }), 400
+
+        now = _now_ts()
+        if int(entry.get('expires_at', 0)) <= now:
+            _pwd_reset_otp_store.pop(otp_ref, None)
+            return jsonify({
+                'success': False,
+                'message': 'OTP expired or invalid. Please request a new OTP.'
+            }), 400
+
+        attempts = int(entry.get('attempts', 0) or 0)
+        if attempts >= _PWD_OTP_MAX_ATTEMPTS:
+            _pwd_reset_otp_store.pop(otp_ref, None)
+            return jsonify({
+                'success': False,
+                'message': 'Too many attempts. Please request a new OTP.'
+            }), 429
+
+        expected_hash = str(entry.get('otp_hash') or '')
+        actual_hash = _hash_otp(otp_ref=otp_ref, otp_code=otp_code)
+        if not hmac.compare_digest(expected_hash, actual_hash):
+            entry['attempts'] = attempts + 1
+            return jsonify({
+                'success': False,
+                'message': 'Invalid OTP code'
+            }), 400
+
+        user_id = entry.get('user_id')
+        user = User.query.get(user_id)
+        if not user or not user.is_active:
+            _pwd_reset_otp_store.pop(otp_ref, None)
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+
+        user.set_password(new_password)
+        db.session.commit()
+        _pwd_reset_otp_store.pop(otp_ref, None)
+
+        try:
+            log_activity(
+                user_id=user.id,
+                action='Reset password via email OTP',
+                entity_type='user',
+                entity_id=user.id,
+                details={'method': 'email_otp'},
+            )
+        except Exception:
+            pass
+
+        return jsonify({
+            'success': True,
+            'message': 'Password reset successfully'
+        }), 200
+
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Password reset failed: {str(e)}'
+        }), 500
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Password reset failed: {str(e)}'
         }), 500
 
 
