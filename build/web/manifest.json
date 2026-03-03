@@ -1,11 +1,11 @@
 {
-    "name": "vivian_cosmetic_shop_application",
-    "short_name": "vivian_cosmetic_shop_application",
+    "name": "Vivian Cosmetic Shop",
+    "short_name": "Vivian POS",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#E91E63",
+    "theme_color": "#E91E63",
+    "description": "Vivian Cosmetic Shop POS System",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
