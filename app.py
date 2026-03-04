@@ -106,7 +106,8 @@ def create_app(config_class=None):
         try:
             from database.bootstrap import ensure_schema_and_seed
 
-            ensure_schema_and_seed(seed_sample_data=True)
+            with app.app_context():
+                ensure_schema_and_seed(seed_sample_data=True)
         except Exception as exc:
             app.logger.exception("DB bootstrap failed: %s", exc)
 
