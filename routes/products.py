@@ -29,6 +29,10 @@ def get_products():
         # Filter by category
         category_id = request.args.get('category_id')
         if category_id:
+            try:
+                category_id = int(category_id)
+            except (ValueError, TypeError):
+                pass
             query = query.filter_by(category_id=category_id)
         
         # Filter by featured

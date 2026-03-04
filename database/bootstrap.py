@@ -14,6 +14,7 @@ from typing import Dict
 from extensions import db
 from models.user import User
 from models.product import Product, Category
+from models.loyalty import LoyaltyTier
 
 
 def seed_users() -> None:
@@ -125,6 +126,35 @@ def seed_products() -> None:
     db.session.commit()
 
 
+def seed_tiers() -> None:
+    """Create default loyalty tiers (idempotent)."""
+
+    tiers = [
+        ("Bronze", 1, 99, 5.00, 1.00, "#CD7F32", "stars", "5% discount on purchases"),
+        ("Silver", 100, 499, 10.00, 1.50, "#C0C0C0", "star", "10% discount on purchases"),
+        ("Gold", 500, 999, 15.00, 2.00, "#FFD700", "workspace_premium", "15% discount on purchases"),
+        ("Platinum", 1000, None, 20.00, 2.00, "#E5E4E2", "workspace_premium", "20% discount on purchases"),
+    ]
+
+    for name, min_pts, max_pts, discount, multiplier, color, icon, benefits in tiers:
+        if not LoyaltyTier.query.filter_by(name=name).first():
+            db.session.add(
+                LoyaltyTier(
+                    name=name,
+                    min_points=min_pts,
+                    max_points=max_pts,
+                    discount_percent=discount,
+                    points_multiplier=multiplier,
+                    color=color,
+                    icon=icon,
+                    benefits=benefits,
+                    is_active=True,
+                )
+            )
+
+    db.session.commit()
+
+
 def ensure_schema_and_seed(*, seed_sample_data: bool = True) -> None:
     """Create tables and seed default data.
 
@@ -133,5 +163,6 @@ def ensure_schema_and_seed(*, seed_sample_data: bool = True) -> None:
 
     db.create_all()
     seed_users()
+    seed_tiers()
     if seed_sample_data:
         seed_products()
