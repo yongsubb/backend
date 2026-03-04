@@ -97,6 +97,19 @@ def create_app(config_class=None):
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     )
 
+    # Ensure schema exists on managed databases (e.g., Render Postgres).
+    # This is idempotent; it only creates missing tables and seeds defaults.
+    auto_init = os.getenv("AUTO_INIT_DB", "").strip().lower()
+    if auto_init in {"1", "true", "yes", "on"} or (
+        auto_init == "" and os.getenv("DATABASE_URL")
+    ):
+        try:
+            from database.bootstrap import ensure_schema_and_seed
+
+            ensure_schema_and_seed(seed_sample_data=True)
+        except Exception as exc:
+            app.logger.exception("DB bootstrap failed: %s", exc)
+
     # Optional one-off schema patch.
     # Disabled by default because it forces an immediate DB connection on startup
     # and can contribute to MySQL/MariaDB instability on some XAMPP installs.
