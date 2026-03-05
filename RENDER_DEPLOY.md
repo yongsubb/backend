@@ -16,9 +16,11 @@ Render Dashboard → **New** → **Web Service** → connect your repo.
 
 **Settings**
 - **Environment**: Python
-- **Root Directory**: `vivian_cosmetic_shop_application/backend`
+- **Root Directory**: (leave blank) or `.`
 - **Build Command**: `pip install -r requirements.txt`
 - **Start Command**: `gunicorn wsgi:app --bind 0.0.0.0:$PORT`
+
+If you deploy using the included `render.yaml`, Render will use these commands automatically.
 
 ## 3) Set Environment Variables (Render → Service → Environment)
 
@@ -33,6 +35,40 @@ Optional (only if you use PayMongo / OTP etc):
 - `PAYMONGO_SECRET_KEY=...`
 - `PAYMONGO_WEBHOOK_SECRET=...`
 - `PUBLIC_HTTPS_BASE_URL=https://<your-render-service>.onrender.com`
+
+### OTP Email via SendGrid (recommended)
+
+This backend sends Loyalty Member OTP emails via SMTP (see `utils/otp_email.py`).
+This backend supports SendGrid in two ways:
+
+1) SendGrid HTTP API (recommended on Render)
+
+- `SENDGRID_API_KEY=<your SendGrid API key>`
+- `SENDGRID_FROM=<a verified sender email in SendGrid>`
+
+2) SendGrid SMTP (fallback)
+
+- `SMTP_HOST=smtp.sendgrid.net`
+- `SMTP_PORT=587`
+- `SMTP_USERNAME=apikey`
+- `SMTP_PASSWORD=<your SendGrid API key>`
+- `SMTP_FROM=<a verified sender email in SendGrid>`
+- `SMTP_USE_TLS=true`
+
+Timeouts (recommended):
+- `EMAIL_SEND_TIMEOUT_SECONDS=8`
+
+Optional email text:
+- `OTP_EMAIL_SUBJECT=Vivian Loyalty Verification Code`
+- `OTP_EMAIL_BODY_TEMPLATE=Your Vivian Loyalty verification code is {otp}. It expires in 5 minutes.`
+
+Optional password reset email text (used by `/api/auth/password-reset/*`):
+- `PWD_RESET_EMAIL_SUBJECT=Vivian Cosmetic Shop Password Reset Code`
+- `PWD_RESET_EMAIL_BODY_TEMPLATE=Your Vivian Cosmetic Shop password reset code is {otp}. It expires in 5 minutes.`
+
+Notes:
+- Verify the sender (`SMTP_FROM`) in SendGrid (Single Sender or Domain Authentication), otherwise SendGrid will reject the email.
+- Keep secrets (`SENDGRID_API_KEY` / `SMTP_PASSWORD`) in Render Environment only, never in the repo.
 
 ## 4) Initialize the database schema (first deploy only)
 

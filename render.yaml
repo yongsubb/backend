@@ -16,9 +16,40 @@ services:
         value: production
       - key: DEBUG
         value: "False"
+      - key: OTP_DEV_ECHO
+        value: "false"
       - key: SECRET_KEY
         generateValue: true
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
         sync: false
+
+      # Email send timeout (seconds) to avoid request timeouts
+      - key: EMAIL_SEND_TIMEOUT_SECONDS
+        value: "8"
+
+      # OTP Email via SendGrid HTTP API (recommended)
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_FROM
+        sync: false
+
+      # OTP Email (SendGrid SMTP) configuration
+      # IMPORTANT: Configure SMTP_PASSWORD in Render dashboard (secret)
+      - key: SMTP_HOST
+        value: smtp.sendgrid.net
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        value: apikey
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_USE_TLS
+        value: "true"
+      - key: OTP_EMAIL_SUBJECT
+        value: Vivian Loyalty Verification Code
+      - key: OTP_EMAIL_BODY_TEMPLATE
+        value: Your Vivian Loyalty verification code is {otp}. It expires in 5 minutes.

@@ -10,7 +10,7 @@ import secrets
 import time
 import uuid
 from typing import Optional
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
@@ -222,6 +222,11 @@ def login():
 def request_password_reset_otp():
     """Request a password reset OTP sent to the user's email."""
 
+    generic_ok = {
+        'success': True,
+        'message': 'If the account exists, a verification code has been sent to the registered email.',
+    }
+
     try:
         _cleanup_pwd_otps()
 
@@ -247,24 +252,15 @@ def request_password_reset_otp():
             user = User.query.filter_by(username=identifier).first()
 
         if not user or not user.is_active:
-            return jsonify({
-                'success': True,
-                'message': 'If the account exists, a verification code has been sent to the registered email.'
-            }), 200
+            return jsonify(generic_ok), 200
 
         email = (user.email or '').strip()
         if not email or not _is_valid_email(email):
-            return jsonify({
-                'success': True,
-                'message': 'If the account exists, a verification code has been sent to the registered email.'
-            }), 200
+            return jsonify(generic_ok), 200
 
         recent = _count_recent_requests(user.id, email)
         if recent >= _PWD_OTP_MAX_REQUESTS_PER_WINDOW:
-            return jsonify({
-                'success': True,
-                'message': 'If the account exists, a verification code has been sent to the registered email.'
-            }), 200
+            return jsonify(generic_ok), 200
 
         otp_ref = str(uuid.uuid4())
         otp_code = _generate_otp_code()
@@ -291,10 +287,7 @@ def request_password_reset_otp():
             except Exception:
                 pass
 
-            return jsonify({
-                'success': True,
-                'message': 'If the account exists, a verification code has been sent to the registered email.'
-            }), 200
+            return jsonify(generic_ok), 200
 
         now = _now_ts()
         _pwd_reset_otp_store[otp_ref] = {
@@ -327,8 +320,20 @@ def request_password_reset_otp():
             }
         }), 200
 
+    except SQLAlchemyError as e:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.exception('Password reset request DB error: %s', e)
+        return jsonify(generic_ok), 200
     except Exception as e:
-        return jsonify({'success': False, 'message': f'Failed to request OTP: {str(e)}'}), 500
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.exception('Password reset request failed: %s', e)
+        return jsonify(generic_ok), 200
 
 
 @auth_bp.route('/password-reset/confirm', methods=['POST'])

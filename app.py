@@ -24,7 +24,11 @@ if _dotenv_path.exists():
 
 # Import extensions and routes
 from extensions import init_extensions, db
-from config.database import SQLALCHEMY_DATABASE_URI, SQLALCHEMY_TRACK_MODIFICATIONS
+from config.database import (
+    SQLALCHEMY_DATABASE_URI,
+    SQLALCHEMY_ENGINE_OPTIONS,
+    SQLALCHEMY_TRACK_MODIFICATIONS,
+)
 from config.settings import get_config
 from routes import register_blueprints
 
@@ -84,6 +88,8 @@ def create_app(config_class=None):
     app.config.from_object(config_class)
     app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = SQLALCHEMY_TRACK_MODIFICATIONS
+    if SQLALCHEMY_ENGINE_OPTIONS:
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = SQLALCHEMY_ENGINE_OPTIONS
     
     # Initialize extensions
     init_extensions(app)
