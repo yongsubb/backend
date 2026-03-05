@@ -1489,17 +1489,25 @@ def loyalty_member_app_login():
         data = request.get_json() or {}
         member_number = (data.get('member_number') or '').strip()
         phone = _normalize_phone(data.get('phone') or '')
+        email = (data.get('email') or '').strip().lower()
         barcode = (data.get('barcode') or '').strip()
         otp_ref = (data.get('otp_ref') or '').strip()
         otp_code = (data.get('otp_code') or '').strip()
 
         if barcode:
             member = LoyaltyMember.query.filter_by(card_barcode=barcode).first()
+        elif email:
+            # Email-based login: look up member via customer email
+            member = (
+                LoyaltyMember.query.join(Customer)
+                .filter(db.func.lower(Customer.email) == email)
+                .first()
+            )
         else:
             if not member_number or not phone:
                 return jsonify({
                     'success': False,
-                    'message': 'member_number and phone are required'
+                    'message': 'email, or member_number and phone are required'
                 }), 400
 
             # Strict phone format: digits only 11-12 (matches cashier registration rules)
@@ -1578,17 +1586,34 @@ def loyalty_member_app_login():
                     'error': 'otp_locked',
                 }), 429
 
-            # Ensure otp_ref matches this member + phone.
-            if (
-                int(entry.get('member_id', -1)) != int(member.id)
-                or str(entry.get('member_number', '')).strip() != member_number
-                or str(entry.get('phone', '')).strip() != phone
-            ):
+            # Ensure otp_ref matches this member.
+            entry_member_id = int(entry.get('member_id', -1))
+            if entry_member_id != int(member.id):
                 return jsonify({
                     'success': False,
                     'message': 'OTP does not match this account. Please request a new OTP.',
                     'error': 'otp_mismatch',
                 }), 400
+
+            # For email-based login, match by email; otherwise match by member_number + phone.
+            entry_email = str(entry.get('email', '')).strip().lower()
+            if email:
+                if entry_email != email:
+                    return jsonify({
+                        'success': False,
+                        'message': 'OTP does not match this account. Please request a new OTP.',
+                        'error': 'otp_mismatch',
+                    }), 400
+            else:
+                if (
+                    str(entry.get('member_number', '')).strip() != member_number
+                    or str(entry.get('phone', '')).strip() != phone
+                ):
+                    return jsonify({
+                        'success': False,
+                        'message': 'OTP does not match this account. Please request a new OTP.',
+                        'error': 'otp_mismatch',
+                    }), 400
 
             provider_mode = str(entry.get('provider_mode') or '').strip().lower()
             if provider_mode == 'textflow':
@@ -1669,6 +1694,7 @@ def loyalty_member_app_request_otp():
         data = request.get_json() or {}
         member_number = (data.get('member_number') or '').strip()
         phone = _normalize_phone(data.get('phone') or '')
+        email = (data.get('email') or '').strip().lower()
         channel = (data.get('channel') or 'email').strip().lower()
 
         # Backward compatible aliases
@@ -1677,25 +1703,33 @@ def loyalty_member_app_request_otp():
         if channel in {'mail', 'gmail'}:
             channel = 'email'
 
-        if not member_number or not phone:
-            return jsonify({
-                'success': False,
-                'message': 'member_number and phone are required'
-            }), 400
-
-        if not re.fullmatch(r'\d{11,12}', phone):
-            return jsonify({'success': False, 'message': 'Invalid phone number'}), 400
-
-        phone_variants = _phone_variants_for_lookup(phone)
-
-        member = (
-            LoyaltyMember.query.join(Customer)
-            .filter(
-                LoyaltyMember.member_number == member_number,
-                Customer.phone.in_(phone_variants),
+        if email:
+            # Email-based lookup: find member by customer email
+            member = (
+                LoyaltyMember.query.join(Customer)
+                .filter(db.func.lower(Customer.email) == email)
+                .first()
             )
-            .first()
-        )
+        else:
+            if not member_number or not phone:
+                return jsonify({
+                    'success': False,
+                    'message': 'email, or member_number and phone are required'
+                }), 400
+
+            if not re.fullmatch(r'\d{11,12}', phone):
+                return jsonify({'success': False, 'message': 'Invalid phone number'}), 400
+
+            phone_variants = _phone_variants_for_lookup(phone)
+
+            member = (
+                LoyaltyMember.query.join(Customer)
+                .filter(
+                    LoyaltyMember.member_number == member_number,
+                    Customer.phone.in_(phone_variants),
+                )
+                .first()
+            )
 
         if not member:
             # Avoid leaking whether member exists: use a generic message.
@@ -1714,8 +1748,9 @@ def loyalty_member_app_request_otp():
                     'error': 'activation_limit_reached',
                 }), 403
 
-        # Basic rate limiting per member+phone.
-        if _count_recent_requests(member.id, phone) >= _OTP_MAX_REQUESTS_PER_WINDOW:
+        # Basic rate limiting per member.
+        rate_phone = phone or (getattr(member.customer, 'phone', '') or '')
+        if _count_recent_requests(member.id, rate_phone) >= _OTP_MAX_REQUESTS_PER_WINDOW:
             return jsonify({
                 'success': False,
                 'message': 'Too many OTP requests. Please wait and try again.',
@@ -1861,10 +1896,11 @@ def loyalty_member_app_request_otp():
             'member_id': int(member.id),
             'member_number': member_number,
             'phone': phone,
+            'email': email,
             'created_at': created_at,
             'expires_at': expires_at,
             'attempts': 0,
-            'rate_key': _rate_limit_key(member.id, phone),
+            'rate_key': _rate_limit_key(member.id, rate_phone),
         }
 
         if provider_entry and (not provider_fallback_to_dev):
