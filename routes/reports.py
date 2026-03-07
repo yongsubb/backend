@@ -1,6 +1,7 @@
 """
 Reports routes - Sales analytics and reports
 """
+import logging
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
@@ -10,6 +11,8 @@ from models.transaction import Transaction, TransactionItem
 from models.product import Product, Category
 from models.refund_request import RefundRequest
 from utils.rbac import require_supervisor
+
+logger = logging.getLogger(__name__)
 
 reports_bp = Blueprint('reports', __name__)
 
@@ -108,9 +111,10 @@ def get_daily_report():
             }
         }), 200
     except Exception as e:
+        logger.exception('Report error: %s', e)
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': 'Failed to generate report'
         }), 500
 
 
@@ -183,9 +187,10 @@ def get_weekly_report():
             }
         }), 200
     except Exception as e:
+        logger.exception('Report error: %s', e)
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': 'Failed to generate report'
         }), 500
 
 
@@ -200,8 +205,8 @@ def get_monthly_report():
         
         # Get transactions for the month
         transactions = Transaction.query.filter(
-            func.year(Transaction.created_at) == year,
-            func.month(Transaction.created_at) == month,
+            func.extract('year', Transaction.created_at) == year,
+            func.extract('month', Transaction.created_at) == month,
             Transaction.status == 'completed'
         ).all()
         
@@ -235,8 +240,8 @@ def get_monthly_report():
             previous_month = month - 1
         
         previous_transactions = Transaction.query.filter(
-            func.year(Transaction.created_at) == previous_year,
-            func.month(Transaction.created_at) == previous_month,
+            func.extract('year', Transaction.created_at) == previous_year,
+            func.extract('month', Transaction.created_at) == previous_month,
             Transaction.status == 'completed'
         ).all()
         previous_sales = sum(float(t.total_amount) for t in previous_transactions)
@@ -262,9 +267,10 @@ def get_monthly_report():
             }
         }), 200
     except Exception as e:
+        logger.exception('Report error: %s', e)
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': 'Failed to generate report'
         }), 500
 
 
@@ -278,7 +284,7 @@ def get_yearly_report():
         
         # Get transactions for the year
         transactions = Transaction.query.filter(
-            func.year(Transaction.created_at) == year,
+            func.extract('year', Transaction.created_at) == year,
             Transaction.status == 'completed'
         ).all()
         
@@ -303,7 +309,7 @@ def get_yearly_report():
         # Calculate trend percentage (compare with previous year)
         previous_year = year - 1
         previous_transactions = Transaction.query.filter(
-            func.year(Transaction.created_at) == previous_year,
+            func.extract('year', Transaction.created_at) == previous_year,
             Transaction.status == 'completed'
         ).all()
         previous_sales = sum(float(t.total_amount) for t in previous_transactions)
@@ -328,9 +334,10 @@ def get_yearly_report():
             }
         }), 200
     except Exception as e:
+        logger.exception('Report error: %s', e)
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': 'Failed to generate report'
         }), 500
 
 
@@ -444,9 +451,10 @@ def get_top_products():
             } for p in top_products]
         }), 200
     except Exception as e:
+        logger.exception('Report error: %s', e)
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': 'Failed to generate report'
         }), 500
 
 
@@ -472,9 +480,10 @@ def get_low_stock():
             'data': [p.to_dict() for p in products]
         }), 200
     except Exception as e:
+        logger.exception('Report error: %s', e)
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': 'Failed to generate report'
         }), 500
 
 
@@ -579,4 +588,5 @@ def get_category_breakdown():
             }
         ), 200
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        logger.exception('Report error: %s', e)
+        return jsonify({'success': False, 'message': 'Failed to generate report'}), 500
